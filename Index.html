@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Emoji Tic Tac Toe</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0b1220" />
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <style>
+    :root{
+      --bg1:#0ea5e9; --bg2:#0b1220;
+      --card: rgba(255,255,255,.08);
+      --border: rgba(255,255,255,.14);
+      --blue: #3b82f6;
+      --red:  #ef4444;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0; min-height:100vh; display:grid; place-items:center;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color:#fff;
+      background: radial-gradient(1200px 600px at 20% 10%, var(--bg1), var(--bg2));
+      transition: background 250ms ease;
+      overflow:hidden;
+    }
+    .game{ width:min(92vw, 360px); text-align:center; position:relative; z-index:2; }
+    h1{ margin:0 0 10px; font-size:22px; }
+
+    .top{
+      display:flex; gap:10px; justify-content:space-between; align-items:stretch;
+      margin:10px 0 12px;
+    }
+    .status, .score{
+      background: var(--card);
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:10px 12px;
+      text-align:left;
+      flex: 1;
+      font-size:14px;
+      line-height:1.25;
+      backdrop-filter: blur(8px);
+    }
+    .score{
+      max-width: 160px;
+      text-align:right;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      gap:4px;
+    }
+    .pBlue{ color: var(--blue); font-weight:900; }
+    .pRed{  color: var(--red);  font-weight:900; }
+
+    .board{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:10px;
+      padding:10px;
+      border-radius:18px;
+      background: var(--card);
+      border:1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+    .cell{
+      aspect-ratio:1/1;
+      border-radius:14px;
+      background: rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.12);
+      display:grid;
+      place-items:center;
+      font-size:52px;
+      cursor:pointer;
+      user-select:none;
+      touch-action:manipulation;
+      transition: transform .08s ease, background .2s ease, border-color .2s ease;
+    }
+    .cell:active{ transform: scale(.98); }
+    .cell.disabled{ cursor:default; opacity:.92; }
+    .cell.win{
+      background: rgba(59,130,246,.25);
+      border-color: rgba(59,130,246,.7);
+    }
+
+    /* NOTE: emoji coloring depends on font rendering; filter works in many browsers */
+    .cell.blueEmoji { filter: hue-rotate(185deg) saturate(220%) brightness(1.08); }
+    .cell.redEmoji  { filter: hue-rotate(330deg) saturate(240%) brightness(1.02); }
+
+    .btns{ display:flex; gap:10px; margin-top:12px; }
+    button{
+      flex:1;
+      padding:10px 12px;
+      border:0;
+      border-radius:12px;
+      background:#2563eb;
+      color:white;
+      font-weight:800;
+      cursor:pointer;
+      touch-action:manipulation;
+    }
+    button.secondary{
+      background: rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.14);
+      color:#fff;
+      font-weight:700;
+    }
+
+    #fx{
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      z-index:999;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="fx"></canvas>
+
+  <div class="game">
+    <h1>Emoji Tic Tac Toe</h1>
+
+    <div class="top">
+      <div class="status" id="status">Your turn 🙂</div>
+      <div class="score">
+        <div><span class="pBlue">🙂</span> Wins: <span id="wins">0</span></div>
+        <div><span class="pRed">😠</span> Wins: <span id="losses">0</span></div>
+        <div>Draws: <span id="draws">0</span></div>
+      </div>
+    </div>
+
+    <div class="board" id="board"></div>
+
+    <div class="btns">
+      <button type="button" id="resetBtn">Reset Round</button>
+      <button type="button" class="secondary" id="clearBtn">Clear Score</button>
+    </div>
+  </div>
+
+<script>
+/* Register Service Worker (PWA offline) */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js"));
+}
+
+/* ---------- Game code (same as before) ---------- */
+const boardEl  = document.getElementById("board");
+const statusEl = document.getElementById("status");
+const winsEl   = document.getElementById("wins");
+const lossesEl = document.getElementById("losses");
+const drawsEl  = document.getElementById("draws");
+const resetBtn = document.getElementById("resetBtn");
+const clearBtn = document.getElementById("clearBtn");
+
+const player = "🙂";
+const ai     = "😠";
+
+const winPatterns = [
+  [0,1,2],[3,4,5],[6,7,8],
+  [0,3,6],[1,4,7],[2,5,8],
+  [0,4,8],[2,4,6]
+];
+
+const scoreKey = "emoji_ttt_score_pwa_v1";
+let score = loadScore();
+function loadScore(){
+  try{
+    const raw = localStorage.getItem(scoreKey);
+    if(!raw) return { wins:0, losses:0, draws:0 };
+    const s = JSON.parse(raw);
+    return { wins:+s.wins||0, losses:+s.losses||0, draws:+s.draws||0 };
+  }catch(e){ return { wins:0, losses:0, draws:0 }; }
+}
+function saveScore(){ localStorage.setItem(scoreKey, JSON.stringify(score)); }
+function renderScore(){
+  winsEl.textContent = score.wins;
+  lossesEl.textContent = score.losses;
+  drawsEl.textContent = score.draws;
+}
+
+let board = Array(9).fill("");
+let gameOver = false;
+let turn = "player";
+
+const cellEls = [];
+for(let i=0;i<9;i++){
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  cell.addEventListener("click", () => playerMove(i));
+  boardEl.appendChild(cell);
+  cellEls.push(cell);
+}
+
+function setThemeForTurn(who){
+  if(who === "player"){
+    document.documentElement.style.setProperty("--bg1", "#3b82f6");
+    document.documentElement.style.setProperty("--bg2", "#0b1220");
+    statusEl.innerHTML = `Your turn <span class="pBlue">${player}</span>`;
+  }else{
+    document.documentElement.style.setProperty("--bg1", "#ef4444");
+    document.documentElement.style.setProperty("--bg2", "#0b1220");
+    statusEl.innerHTML = `AI thinking... <span class="pRed">${ai}</span>`;
+  }
+}
+
+function getWinLine(symbol){
+  for(const line of winPatterns){
+    const [a,b,c] = line;
+    if(board[a]===symbol && board[b]===symbol && board[c]===symbol) return line;
+  }
+  return null;
+}
+function highlightWin(line){ line.forEach(i => cellEls[i].classList.add("win")); }
+function disableBoard(){ cellEls.forEach(el => el.classList.add("disabled")); }
+
+function updateBoard(){
+  cellEls.forEach((cell,i)=>{
+    const v = board[i];
+    cell.textContent = v;
+    cell.classList.remove("blueEmoji","redEmoji");
+    if(v === player) cell.classList.add("blueEmoji");
+    if(v === ai)     cell.classList.add("redEmoji");
+  });
+}
+
+function endRound(result){
+  gameOver = true;
+  disableBoard();
+
+  if(result === "win"){
+    score.wins++;
+    statusEl.innerHTML = `You win! 🎉 <span class="pBlue">${player}</span>`;
+    fx.playFireworks();
+  }else if(result === "loss"){
+    score.losses++;
+    statusEl.innerHTML = `AI wins! <span class="pRed">${ai}</span>`;
+    fx.playStorm();
+  }else{
+    score.draws++;
+    statusEl.textContent = "Draw 🤝";
+  }
+  saveScore(); renderScore();
+}
+
+function playerMove(index){
+  if(gameOver) return;
+  if(turn !== "player") return;
+  if(board[index] !== "") return;
+
+  board[index] = player;
+  updateBoard();
+
+  const winLine = getWinLine(player);
+  if(winLine){ highlightWin(winLine); endRound("win"); return; }
+  if(board.every(c=>c!=="")){ endRound("draw"); return; }
+
+  turn = "ai";
+  setThemeForTurn("ai");
+  setTimeout(aiMove, 450);
+}
+
+function findBestImmediateMove(symbol){
+  for(const line of winPatterns){
+    const [a,b,c] = line;
+    const empties = [a,b,c].filter(i => board[i] === "");
+    const count = [board[a], board[b], board[c]].filter(v => v === symbol).length;
+    if(count === 2 && empties.length === 1) return empties[0];
+  }
+  return null;
+}
+
+function aiMove(){
+  if(gameOver) return;
+  const empty = board.map((v,i)=> v==="" ? i : null).filter(v=>v!==null);
+
+  let move = findBestImmediateMove(ai);
+  if(move === null) move = findBestImmediateMove(player);
+  if(move === null && board[4] === "") move = 4;
+  if(move === null){
+    const corners = [0,2,6,8].filter(i=> board[i] === "");
+    if(corners.length) move = corners[Math.floor(Math.random()*corners.length)];
+  }
+  if(move === null) move = empty[Math.floor(Math.random()*empty.length)];
+
+  board[move] = ai;
+  updateBoard();
+
+  const winLine = getWinLine(ai);
+  if(winLine){ highlightWin(winLine); endRound("loss"); return; }
+  if(board.every(c=>c!=="")){ endRound("draw"); return; }
+
+  turn = "player";
+  setThemeForTurn("player");
+}
+
+function resetRound(){
+  board = Array(9).fill("");
+  gameOver = false;
+  turn = "player";
+  cellEls.forEach(el => el.classList.remove("win","disabled","blueEmoji","redEmoji"));
+  updateBoard();
+  setThemeForTurn("player");
+  fx.stop();
+}
+function clearScore(){
+  score = { wins:0, losses:0, draws:0 };
+  saveScore(); renderScore();
+}
+resetBtn.addEventListener("click", resetRound);
+clearBtn.addEventListener("click", () => { clearScore(); resetRound(); });
+
+/* ---------- FX (Canvas) ---------- */
+const canvas = document.getElementById("fx");
+const ctx = canvas.getContext("2d");
+function resizeCanvas(){
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  canvas.width = Math.floor(window.innerWidth * dpr);
+  canvas.height = Math.floor(window.innerHeight * dpr);
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+const fx = (() => {
+  let mode="none", raf=null, lastT=0;
+  let bursts=[], drops=[], lightning=[], stormEndTimer=null;
+
+  const rand=(a,b)=>Math.random()*(b-a)+a;
+
+  function clear(){ ctx.clearRect(0,0,innerWidth,innerHeight); }
+
+  function start(newMode){
+    stop();
+    mode=newMode; lastT=performance.now();
+
+    if(mode==="fireworks"){
+      bursts=[];
+      for(let i=0;i<4;i++) spawnBurst(true);
+      const startTime=performance.now();
+      const spawnInterval=setInterval(()=>{
+        if(mode!=="fireworks"){ clearInterval(spawnInterval); return; }
+        spawnBurst(false);
+        if(performance.now()-startTime>2500){
+          clearInterval(spawnInterval);
+          setTimeout(()=>{ if(mode==="fireworks") stop(); }, 1400);
+        }
+      },380);
+    }
+
+    if(mode==="storm"){
+      drops=[]; lightning=[];
+      const count=Math.min(240, Math.floor(innerWidth*0.4));
+      for(let i=0;i<count;i++){
+        drops.push({ x:rand(0,innerWidth), y:rand(-innerHeight,0), len:rand(12,26), vy:rand(750,1300), w:rand(1,2) });
+      }
+      const makeBolt=()=>{
+        if(mode!=="storm") return;
+        spawnLightning();
+        setTimeout(makeBolt, rand(350,1200));
+      };
+      setTimeout(makeBolt, rand(250,700));
+      stormEndTimer=setTimeout(()=>{ if(mode==="storm") stop(); }, 4200);
+    }
+
+    raf=requestAnimationFrame(tick);
+  }
+
+  function stop(){
+    if(raf) cancelAnimationFrame(raf);
+    raf=null; mode="none";
+    bursts=[]; drops=[]; lightning=[];
+    if(stormEndTimer){ clearTimeout(stormEndTimer); stormEndTimer=null; }
+    clear();
+  }
+
+  function spawnBurst(initial){
+    const x=rand(innerWidth*0.15, innerWidth*0.85);
+    const y=rand(innerHeight*0.12, innerHeight*0.50);
+    const n=initial?70:90;
+    for(let i=0;i<n;i++){
+      const a=rand(0,Math.PI*2), sp=rand(140,520);
+      bursts.push({ x,y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, life:rand(0.9,1.5), age:0, r:rand(2,4) });
+    }
+  }
+
+  function drawFireworks(dt){
+    ctx.fillStyle="rgba(0,0,0,0.18)";
+    ctx.fillRect(0,0,innerWidth,innerHeight);
+    const g=520;
+    for(let i=bursts.length-1;i>=0;i--){
+      const p=bursts[i];
+      p.age+=dt;
+      if(p.age>=p.life){ bursts.splice(i,1); continue; }
+      p.vy+=g*dt; p.x+=p.vx*dt; p.y+=p.vy*dt;
+      const t=1-(p.age/p.life);
+      const alpha=Math.max(0,t);
+      const hue=(p.x*0.2+p.y*0.1+p.age*240)%360;
+      ctx.beginPath();
+      ctx.fillStyle=`hsla(${hue},95%,65%,${alpha})`;
+      ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fill();
+    }
+    if(bursts.length===0) stop();
+  }
+
+  function spawnLightning(){
+    const startX=rand(innerWidth*0.15, innerWidth*0.85);
+    const pts=[];
+    let x=startX, y=rand(-10,40);
+    pts.push({x,y});
+    const segments=Math.floor(rand(10,18));
+    for(let i=0;i<segments;i++){
+      x+=rand(-28,28);
+      y+=rand(26,48);
+      pts.push({x,y});
+      if(y>innerHeight*0.75) break;
+    }
+    lightning.push({ points:pts, age:0, life:rand(0.12,0.22) });
+  }
+
+  function drawStorm(dt){
+    ctx.clearRect(0,0,innerWidth,innerHeight);
+    ctx.fillStyle="rgba(0,0,0,0.22)";
+    ctx.fillRect(0,0,innerWidth,innerHeight);
+
+    // rain
+    ctx.strokeStyle="rgba(200,220,255,0.55)";
+    ctx.lineCap="round";
+    for(const d of drops){
+      d.y+=d.vy*dt; d.x+=140*dt;
+      if(d.y>innerHeight+30){ d.y=rand(-250,-20); d.x=rand(0,innerWidth); }
+      if(d.x>innerWidth+40) d.x=-20;
+      ctx.lineWidth=d.w;
+      ctx.beginPath();
+      ctx.moveTo(d.x,d.y);
+      ctx.lineTo(d.x-12, d.y-d.len);
+      ctx.stroke();
+    }
+
+    // lightning + flash
+    let flashAlpha=0;
+    for(let i=lightning.length-1;i>=0;i--){
+      const b=lightning[i];
+      b.age+=dt;
+      const t=b.age/b.life;
+      if(t>=1){ lightning.splice(i,1); continue; }
+      const alpha=(1-t)*0.9;
+      flashAlpha=Math.max(flashAlpha, alpha*0.35);
+
+      ctx.strokeStyle=`rgba(255,255,255,${alpha})`;
+      ctx.lineWidth=5;
+      ctx.beginPath();
+      ctx.moveTo(b.points[0].x,b.points[0].y);
+      for(const p of b.points) ctx.lineTo(p.x,p.y);
+      ctx.stroke();
+
+      ctx.strokeStyle=`rgba(230,245,255,${alpha})`;
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(b.points[0].x,b.points[0].y);
+      for(const p of b.points) ctx.lineTo(p.x,p.y);
+      ctx.stroke();
+    }
+    if(flashAlpha>0){
+      ctx.fillStyle=`rgba(255,255,255,${flashAlpha})`;
+      ctx.fillRect(0,0,innerWidth,innerHeight);
+    }
+  }
+
+  function tick(t){
+    const dt=Math.min(0.033,(t-lastT)/1000);
+    lastT=t;
+    if(mode==="fireworks") drawFireworks(dt);
+    else if(mode==="storm") drawStorm(dt);
+    if(mode!=="none") raf=requestAnimationFrame(tick);
+  }
+
+  return {
+    playFireworks(){ start("fireworks"); },
+    playStorm(){ start("storm"); },
+    stop
+  };
+})();
+
+renderScore();
+resetRound();
+</script>
+</body>
+</html>
